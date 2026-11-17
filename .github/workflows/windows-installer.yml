@@ -1,0 +1,105 @@
+name: Windows installer
+
+# Manual only. Download Buntly-Setup.exe from the run's artifacts and
+# attach it to a GitHub Release. The speech-check artifact is for timing
+# a ten-second clip on a Windows laptop. It is not the friend download.
+on:
+  workflow_dispatch:
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.428
+
+      - name: Test the shared rules
+        run: dotnet test windows/Buntly.Windows.sln -c Release --nologo
+
+      - name: Publish the tray app
+        run: >
+          dotnet publish windows/src/Buntly.Windows/Buntly.Windows.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false
+          -p:DebugType=none -p:DebugSymbols=false
+          -p:IncludeSourceRevisionInInformationalVersion=false
+          -p:EnableSourceControlManagerQueries=false
+          -p:PublishRepositoryUrl=false
+          -o dist/windows
+
+      - name: Publish the speech-speed check
+        run: >
+          dotnet publish windows/src/Buntly.SpeechCheck/Buntly.SpeechCheck.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false
+          -p:DebugType=none -p:DebugSymbols=false
+          -p:IncludeSourceRevisionInInformationalVersion=false
+          -p:EnableSourceControlManagerQueries=false
+          -p:PublishRepositoryUrl=false
+          -o dist/speech-check
+
+      - name: Confirm the publish does not name the private repository
+        shell: pwsh
+        run: |
+          $needles = @("githubusercontent", "NithinRe/voice-dictation", "nithinreddynagapur")
+          $hits = @()
+          $latin1 = [System.Text.Encoding]::GetEncoding("iso-8859-1")
+          $utf16 = [System.Text.Encoding]::Unicode
+          Get-ChildItem dist/windows, dist/speech-check -Recurse -File | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            $asLatin = $latin1.GetString($bytes)
+            $asWide = $utf16.GetString($bytes)
+            foreach ($needle in $needles) {
+              if ($asLatin.Contains($needle) -or $asWide.Contains($needle)) {
+                $hits += "$($_.FullName) contains $needle"
+              }
+            }
+          }
+          if ($hits.Count -gt 0) {
+            $hits | ForEach-Object { Write-Host $_ }
+            throw "The publish names the private repository or a home directory. Do not pack the installer."
+          }
+
+      - name: Confirm Whisper.net can see its Windows libraries
+        shell: pwsh
+        run: |
+          $need = @(
+            "dist/windows/Buntly.exe",
+            "dist/windows/Read Me First.txt",
+            "dist/windows/runtimes/win-x64/whisper.dll",
+            "dist/windows/runtimes/win-x64/ggml-whisper.dll",
+            "dist/windows/runtimes/win-x64/ggml-base-whisper.dll",
+            "dist/windows/runtimes/win-x64/ggml-cpu-whisper.dll"
+          )
+          foreach ($path in $need) {
+            if (-not (Test-Path $path)) {
+              throw "Missing $path. Whisper.net loads natives from runtimes/win-x64. Do not switch this to a single-file publish."
+            }
+            Write-Host $path
+          }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Buntly-Setup.exe
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not found at $iscc." }
+          & $iscc "/DSourceDir=$PWD\dist\windows" "$PWD\windows\installer\buntly.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Buntly-Setup
+          path: windows/installer/output/Buntly-Setup.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Buntly-SpeechCheck
+          path: dist/speech-check/
+          if-no-files-found: error

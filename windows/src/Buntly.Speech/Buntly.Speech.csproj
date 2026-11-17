@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Buntly.Speech</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Buntly.Core\Buntly.Core.csproj" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+  </ItemGroup>
+</Project>
